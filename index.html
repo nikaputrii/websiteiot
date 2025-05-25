@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Virtual Smart Reminder & Environment Monitor (Lengkap)</title>
+
+<!-- Chart.js CDN -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    margin: 20px auto;
+    max-width: 800px;
+    background: #f9faff;
+    padding: 20px;
+  }
+  h1 {
+    text-align: center;
+    color: #333;
+  }
+  .controls {
+    background: white;
+    padding: 15px 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+    margin-bottom: 20px;
+  }
+  label {
+    display: inline-block;
+    width: 220px;
+    margin-right: 10px;
+    font-weight: bold;
+  }
+  input[type="number"] {
+    width: 80px;
+    padding: 5px;
+    font-size: 14px;
+  }
+  button {
+    padding: 8px 15px;
+    font-size: 16px;
+    margin-top: 10px;
+    cursor: pointer;
+    border: none;
+    border-radius: 6px;
+    background: #007bff;
+    color: white;
+    transition: background 0.3s;
+  }
+  button:hover {
+    background: #0056b3;
+  }
+  .status {
+    margin-top: 10px;
+    font-weight: bold;
+  }
+  .good { color: green; }
+  .warning { color: orange; }
+  .danger { color: red; }
+  .data-display {
+    background: white;
+    padding: 15px 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+    margin-bottom: 20px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 15px;
+  }
+  th, td {
+    padding: 8px 10px;
+    border: 1px solid #ddd;
+    text-align: center;
+  }
+  th {
+    background: #007bff;
+    color: white;
+  }
+</style>
+
+</head>
+<body>
+
+<h1>Virtual Smart Reminder & Environment Monitor</h1>
+
+<div class="controls">
+  <div>
+    <label for="intervalInput">Interval Update Data (detik):</label>
+    <input type="number" id="intervalInput" value="10" min="1" max="60" />
+  </div>
+  <div>
+    <label for="tempThresholdWarn">Ambang Suhu Peringatan (°C):</label>
+    <input type="number" id="tempThresholdWarn" value="28" min="0" max="50" />
+  </div>
+  <div>
+    <label for="tempThresholdDanger">Ambang Suhu Bahaya (°C):</label>
+    <input type="number" id="tempThresholdDanger" value="35" min="0" max="50" />
+  </div>
+  <div>
+    <label for="noiseThresholdWarn">Ambang Kebisingan Peringatan (dB):</label>
+    <input type="number" id="noiseThresholdWarn" value="60" min="0" max="120" />
+  </div>
+  <div>
+    <label for="noiseThresholdDanger">Ambang Kebisingan Bahaya (dB):</label>
+    <input type="number" id="noiseThresholdDanger" value="85" min="0" max="120" />
+  </div>
+  <button id="startBtn">Mulai Simulasi</button>
+  <button id="stopBtn" disabled>Berhenti</button>
+</div>
+
+<div class="data-display">
+  <canvas id="chartTemp" height="150"></canvas>
+  <canvas id="chartNoise" height="150" style="margin-top: 30px;"></canvas>
+</div>
+
+<div class="data-display">
+  <h3>Riwayat Data</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>Waktu</th>
+        <th>Suhu (°C)</th>
+        <th>Status Suhu</th>
+        <th>Kebisingan (dB)</th>
+        <th>Status Kebisingan</th>
+      </tr>
+    </thead>
+    <tbody id="historyTableBody"></tbody>
+  </table>
+</div>
+
+<script>
+  let intervalId = null;
+  let updateInterval = 10000; // default 10 detik
+  const history = [];
+
+  // Ambang batas default
+  let tempWarn = 28;
+  let tempDanger = 35;
+  let noiseWarn = 60;
+  let noiseDanger = 85;
+
+  const tempValueEl = document.getElementById('tempValue');
+  const noiseValueEl = document.getElementById('noiseValue');
+  const historyTableBody = document.getElementById('historyTableBody');
+
+  const ctxTemp = document.getElementById('chartTemp').getContext('2d');
+  const ctxNoise = document.getElementById('chartNoise').getContext('2d');
+
+  // Setup chart suhu
+  const chartTemp = new Chart(ctxTemp, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [{
+        label: 'Suhu (°C)',
+        data: [],
+        borderColor: 'rgba(255, 99, 132, 1)',
+        backgroundColor: 'rgba(255, 99, 132, 0.2)',
+        tension: 0.3,
+        fill: true,
+      }]
+    },
+    options: {
+      scales: {
+        y: {
+          suggestedMin: 20,
+          suggestedMax: 45
+        }
+      }
+    }
+  });
+
+  // Setup chart kebisingan
+  const chartNoise = new Chart(ctxNoise, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [{
+        label: 'Kebisingan (dB)',
+        data: [],
+        borderColor: 'rgba(54, 162, 235, 1)',
+        backgroundColor: 'rgba(54, 162, 235, 0.2)',
+        tension: 0.3,
+        fill: true,
+      }]
+    },
+    options: {
+      scales: {
+        y: {
+          suggestedMin: 20,
+          suggestedMax: 120
+        }
+      }
+    }
+  });
+
+  function addData(time, temp, tempStatus, noise, noiseStatus) {
+    // Update chart
+    if(chartTemp.data.labels.length > 20) {
+      chartTemp.data.labels.shift();
+      chartTemp.data.datasets[0].data.shift();
+      chartNoise.data.labels.shift();
+      chartNoise.data.datasets[0].data.shift();
+    }
+    chartTemp.data.labels.push(time);
+    chartTemp.data.datasets[0].data.push(temp);
+    chartTemp.update();
+
+    chartNoise.data.labels.push(time);
+    chartNoise.data.datasets[0].data.push(noise);
+    chartNoise.update();
+
+    // Tambah ke riwayat
+    history.push({time, temp, tempStatus, noise, noiseStatus});
+    if(history.length > 50) history.shift();
+
+    renderHistory();
+  }
+
+  function renderHistory() {
+    historyTableBody.innerHTML = '';
+    history.slice().reverse().forEach(item => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${item.time}</td>
+        <td>${item.temp}</td>
+        <td class="${getStatusClass(item.tempStatus)}">${item.tempStatus}</td>
+        <td>${item.noise}</td>
+        <td class="${getStatusClass(item.noiseStatus)}">${item.noiseStatus}</td>
+      `;
+      historyTableBody.appendChild(tr);
+    });
+  }
+
+  function getStatusClass(status) {
+    if(status.includes('nyaman')) return 'good';
+    if(status.includes('agak') || status.includes('cukup')) return 'warning';
+    if(status.includes('terlalu') || status.includes('tinggi')) return 'danger';
+    return '';
+  }
+
+  function checkStatusSuhu(suhu) {
+    if(suhu < tempWarn) return 'Suhu nyaman';
+    if(suhu < tempDanger) return 'Suhu agak panas, disarankan istirahat';
+    return 'Suhu terlalu panas! Harap istirahat segera!';
+  }
+
+  function checkStatusNoise(noise) {
+    if(noise < noiseWarn) return 'Lingkungan tenang';
+    if(noise < noiseDanger) return 'Lingkungan cukup bising, jaga kesehatan pendengaran';
+    return 'Kebisingan tinggi! Kurangi suara!';
+  }
+
+  function updateData() {
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString();
+
+    const suhu = +(25 + Math.random() * 15).toFixed(1);  // 25-40°C
+    const noise = +(30 + Math.random() * 80).toFixed(0); // 30-110 dB
+
+    const tempStatus = checkStatusSuhu(suhu);
+    const noiseStatus = checkStatusNoise(noise);
+
+    addData(timeStr, suhu, tempStatus, noise, noiseStatus);
+
+    if(tempStatus.includes('terlalu panas')) alert("Peringatan: Suhu terlalu panas! Silakan istirahat sebentar.");
+    if(noiseStatus.includes('tinggi')) alert("Peringatan: Lingkungan terlalu bising! Mohon tenangkan suara.");
+  }
+
+  // Start/Stop simulasi
+  const startBtn = document.getElementById('startBtn');
+  const stopBtn = document.getElementById('stopBtn');
+
+  startBtn.onclick = () => {
+    // Ambil nilai dari input
+    updateInterval = parseInt(document.getElementById('intervalInput').value) * 1000;
+    tempWarn = parseInt(document.getElementById('tempThresholdWarn').value);
+    tempDanger = parseInt(document.getElementById('tempThresholdDanger').value);
+    noiseWarn = parseInt(document.getElementById('noiseThresholdWarn').value);
+    noiseDanger = parseInt(document.getElementById('noiseThresholdDanger').value);
+
+    if(intervalId) clearInterval(intervalId);
+    updateData();
+    intervalId = setInterval(updateData, updateInterval);
+
+    startBtn.disabled = true;
+    stopBtn.disabled = false;
+  };
+
+  stopBtn.onclick = () => {
+    if(intervalId) clearInterval(intervalId);
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+  };
+</script>
+
+</body>
+</html>
